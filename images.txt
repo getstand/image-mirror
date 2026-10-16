@@ -1,0 +1,19 @@
+# One image per line, written the way a Dockerfile or a CI `image:` would name
+# it on Docker Hub. Each is served from ghcr.io/getstand/mirror/<name>:<tag>.
+#
+#   postgres:14.18                -> ghcr.io/getstand/mirror/postgres:14.18
+#   moby/buildkit:buildx-stable-1 -> ghcr.io/getstand/mirror/moby/buildkit:buildx-stable-1
+#
+# An image that does not live on Docker Hub takes its full upstream reference
+# as a second column:
+#
+#   some/tool:1.2  quay.io/some/tool:1.2
+#
+# Keep the tag explicit. `latest` is a choice, not a default.
+
+# socotra_webhooks (PROD-9081)
+postgres:latest
+postgres:14.18
+redis:latest
+ruby:3.3.12-slim-bookworm
+moby/buildkit:buildx-stable-1

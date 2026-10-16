@@ -1,0 +1,78 @@
+#!/usr/bin/env bash
+# Copies every image in images.txt into ghcr.io/getstand/mirror, digest for
+# digest, and writes what the mirror now serves to images.lock.
+#
+# Docker Hub images are read through Google's and Amazon's mirrors before Docker
+# Hub itself: GitHub's runners share IPs, and each registry rations anonymous
+# pulls per IP. mirror.gcr.io has never refused us; public.ecr.aws has a 500 GB
+# per month cap that ran out on 2026-10-16; Docker Hub's hourly limit is the
+# smallest of the three.
+#
+# Usage: bin/sync [images.txt]   (needs `crane`, logged in to ghcr.io)
+set -euo pipefail
+
+MIRROR="ghcr.io/getstand/mirror"
+LIST="${1:-images.txt}"
+LOCK="images.lock"
+
+sources_for() {
+  local name="$1" upstream="$2"
+  if [[ -n "$upstream" ]]; then
+    echo "$upstream"
+    return
+  fi
+  local path="$name"
+  [[ "$path" == */* ]] || path="library/$path"
+  echo "mirror.gcr.io/$path"
+  [[ "$path" == library/* ]] && echo "public.ecr.aws/docker/$path"
+  echo "docker.io/$path"
+}
+
+failed=()
+: > "$LOCK.new"
+
+while read -r name upstream _; do
+  [[ -z "$name" || "$name" == \#* ]] && continue
+  target="$MIRROR/$name"
+
+  digest=""
+  for src in $(sources_for "$name" "$upstream"); do
+    if digest="$(crane digest "$src" 2>/dev/null)"; then
+      source="$src"
+      break
+    fi
+    echo "$name: $src did not answer" >&2
+  done
+  if [[ -z "$digest" ]]; then
+    echo "$name: FAILED, no source answered" >&2
+    failed+=("$name")
+    continue
+  fi
+
+  if [[ "$(crane digest "$target" 2>/dev/null || true)" == "$digest" ]]; then
+    echo "$name: up to date ($digest)"
+  else
+    echo "$name: copying from $source"
+    if ! crane copy "$source" "$target"; then
+      echo "$name: FAILED, copy from $source refused" >&2
+      failed+=("$name")
+      continue
+    fi
+    mirrored="$(crane digest "$target")"
+    if [[ "$mirrored" != "$digest" ]]; then
+      echo "$name: FAILED, mirror serves $mirrored but $source is $digest" >&2
+      failed+=("$name")
+      continue
+    fi
+    echo "$name: mirrored ($digest)"
+  fi
+  echo "$target@$digest" >> "$LOCK.new"
+done < "$LIST"
+
+sort -o "$LOCK.new" "$LOCK.new"
+if [[ ${#failed[@]} -gt 0 ]]; then
+  rm -f "$LOCK.new"
+  echo "failed: ${failed[*]}" >&2
+  exit 1
+fi
+mv "$LOCK.new" "$LOCK"
