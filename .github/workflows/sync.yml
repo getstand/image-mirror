@@ -39,7 +39,9 @@ jobs:
           crane version
 
       - name: Log in to ghcr.io
-        run: crane auth login ghcr.io -u "${{ github.actor }}" -p "${{ secrets.GITHUB_TOKEN }}"
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: crane auth login ghcr.io -u "${{ github.actor }}" --password-stdin <<< "$GITHUB_TOKEN"
 
       - name: Sync images
         run: bin/sync
