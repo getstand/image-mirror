@@ -67,27 +67,65 @@ unused packages from the org's package settings.
 
 ## How the sync works
 
-`bin/sync` runs every Monday, on every change to `images.txt`, and on demand
-(**Actions → Sync → Run workflow**). For each image it reads the upstream
-digest, skips the copy when the mirror already serves it, and otherwise copies
-the whole manifest list with `crane copy`, so the mirrored digest equals the
-upstream digest on every platform.
+The sync is the GitHub Actions workflow in `.github/workflows/sync.yml`. It
+runs on three triggers:
 
-Docker Hub images are read through `mirror.gcr.io` first, then
-`public.ecr.aws`, then Docker Hub, so the weekly refresh itself does not depend
-on any one registry's per-IP allowance.
+- **Mondays at 06:17 UTC.** This is the weekly refresh.
+- **A push to `main`** that touches `images.txt`, `bin/sync` or the workflow,
+  so adding an image syncs it straight away.
+- **On demand**: Actions → Sync → Run workflow.
 
-`images.lock` records the digest behind every tag the mirror serves, committed
-by the sync whenever one changes. That is also what `git log` answers when
-someone asks what `postgres:latest` resolved to on a given date: an unpinned
-tag here changes only when a sync runs, never between two CI runs.
+### What a run does
+
+The job downloads a pinned `crane` release and checks its sha256 before using
+it, logs in to `ghcr.io` with the job's own `GITHUB_TOKEN` (which has
+`packages: write` on this repo's packages), and runs `bin/sync`. For every line
+of `images.txt` the script:
+
+1. Reads the upstream digest, trying `mirror.gcr.io` first, then
+   `public.ecr.aws`, then Docker Hub, and taking the first that answers. The
+   refresh therefore does not depend on any one registry's per-IP allowance.
+2. Compares it with the digest the mirror serves. If they match it prints
+   "up to date" and moves on; nothing is pulled or pushed.
+3. Otherwise copies the image with `crane copy`, registry to registry with no
+   Docker daemon, including every platform in the index, then reads the digest
+   back from the mirror and checks it equals the upstream one.
+4. Appends `<mirrored ref>@<digest>` to a new lockfile.
+
+If any image fails every source, or its copy fails, the run exits non-zero and
+the old `images.lock` is left alone. Otherwise the new lockfile replaces it and
+the last step commits it as `github-actions[bot]`. A run where nothing changed
+commits nothing.
+
+### What to expect over time
+
+- **Floating tags drift, pinned tags do not.** `postgres:latest` and
+  `redis:latest` move whenever Docker Hub publishes a new image, so most
+  Mondays copy those. A tag like `ruby:3.3.12-slim-bookworm` moves only when
+  its maintainers rebuild that exact tag, usually for a base-OS security patch.
+  `git log images.lock` is the record of when the mirror changed and to what,
+  and answers what `postgres:latest` resolved to on a given date.
+- **The mirror lags upstream by up to a week.** A consumer pulling an unpinned
+  tag gets what the last sync copied, not Docker Hub's current image, and the
+  tag changes only when a sync runs, never between two CI runs. A Dockerfile
+  base image should be pinned by digest so a Monday refresh can never change
+  what production builds from without a reviewed PR (Dependabot's `docker`
+  ecosystem bumps the digest).
+- **The bot's commit keeps the schedule alive.** GitHub disables scheduled
+  workflows on a public repo after 60 days without a commit. The `images.lock`
+  commits count, and the floating tags mean there is nearly always one. If
+  every tag in the list were ever pinned and stable, the schedule would need
+  watching; if it is disabled, re-enable it from the Actions tab. A disabled
+  schedule means the mirror stops refreshing, not that it stops serving.
+
+### When a run fails
+
+The workflow goes red on the Actions tab and GitHub emails whoever last
+committed to the workflow. Nothing posts to Slack. The mirror keeps serving
+its last good copy of every image, so consuming CI does not break; what breaks
+is only that the mirror stops tracking upstream until the next green run.
 
 ## Caveats
 
-- A scheduled workflow on a public repo is disabled after 60 days without a
-  commit. The `images.lock` commits count, and `postgres:latest` moves often
-  enough that this has not been a problem; if the schedule is ever disabled,
-  re-enable it from the Actions tab. A disabled schedule only means the mirror
-  stops refreshing, not that it stops serving.
 - `crane copy` of an unpinned tag copies every platform in the index. Storage
-  for public packages is free, so nothing here trims it.
+  for the org's packages has not been a concern, so nothing here trims it.
