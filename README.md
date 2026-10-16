@@ -44,6 +44,53 @@ If an administrator enables public packages for the org, make the packages
 public (**Package settings → Danger Zone → Change visibility**) and both
 caveats go away, including for Railway.
 
+## Setting up a new repo
+
+In order:
+
+1. **Check the tag is mirrored.** Every tag you pull must be a line in
+   `images.txt`; a tag that is not there answers `manifest unknown`. If yours
+   is missing, add it (see "Adding an image") and wait for that sync to go
+   green before changing your workflow.
+2. **Grant the repo on each package it uses.** For each of `postgres`, `redis`,
+   `ruby`, `moby/buildkit`, ... open the package from
+   https://github.com/orgs/getstand/packages?repo_name=image-mirror, then
+   **Package settings → Manage Actions access → Add repository**, role Read.
+   This needs admin on the package, which comes with admin on this repo; ask
+   @davyaginuma if you do not have it.
+3. **Keep `packages: read` on the job's token.** A workflow with no
+   `permissions:` block has it by default. A workflow that declares
+   `permissions:` for any reason drops every scope it does not list, and the
+   pull then fails with the same `denied` as a missing grant, so add
+   `packages: read` to that block.
+4. **Change the workflow.** A service container takes the `credentials:` block
+   under "Using it". A `docker build` in CI, whether for the buildx driver
+   image or for a Dockerfile `FROM`, needs a login step first:
+
+   ```yaml
+   - uses: docker/login-action@v4
+     with:
+       registry: ghcr.io
+       username: ${{ github.actor }}
+       password: ${{ secrets.GITHUB_TOKEN }}
+
+   - uses: docker/setup-buildx-action@v4
+     with:
+       driver-opts: image=ghcr.io/getstand/mirror/moby/buildkit:buildx-stable-1
+   ```
+
+   A Dockerfile that Railway also builds keeps its `FROM` on `mirror.gcr.io`
+   (see "Using it"); the login only helps builds that run on GitHub.
+5. **Check the first run.** The job log for a service container shows
+   `Downloaded newer image for ghcr.io/getstand/mirror/<name>:<tag>` and a
+   buildx setup shows the mirror's buildkit image being pulled. `denied` after
+   a successful login means step 2 or 3; `manifest unknown` means step 1.
+
+A run that Dependabot triggers uses a read-only token and the actor
+`dependabot[bot]`. That should still pull a package the repo is granted on,
+but no run has exercised it yet; if the first one is refused, that is where to
+look.
+
 ## Adding an image
 
 Add a line to `images.txt`, written the way you would name the image on Docker
