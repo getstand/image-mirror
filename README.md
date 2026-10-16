@@ -53,6 +53,13 @@ moby/buildkit:buildx-stable-1
 ```
 
 Merging to `main` runs the sync, and the image is pullable a few minutes later.
+
+**A new package starts private**, whatever the repo's visibility, and GitHub
+offers no API to change that. After the first sync of a new image, open the
+package in the [org's packages](https://github.com/orgs/getstand/packages),
+then **Package settings → Danger Zone → Change visibility → Public**. Until
+then only this repo's own workflows can pull it: another repo's
+`GITHUB_TOKEN` is refused, and so is Railway.
 An image that does not live on Docker Hub takes its full upstream reference as
 a second column (see the comments in `images.txt`).
 
